@@ -1,11 +1,13 @@
 package main
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"http-from-tcp/internal/headers"
 	"http-from-tcp/internal/request"
 	"http-from-tcp/internal/response"
 	"http-from-tcp/internal/server"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -74,31 +76,53 @@ func main() {
     h.Set("Connection", "close")
     h.Set("Transfer-Encoding", "chunked")
     h.Set("Content-Type", "text/plain")
+    h.Set("Trailer", "X-Content-SHA256,X-Content-Length")
+
+    fullData := []byte{}
     if strings.HasPrefix(path, "/httpbin/") {
       newPath := strings.TrimPrefix(path, "/httpbin/")
       url := fmt.Sprintf("https://httpbin.org/%s", newPath)
       r, err := http.Get(url)
       if err != nil {
-        log.Fatal("super bad err", err)
+        log.Fatal("error getting response from httbin.org", err)
       }
-      buf := make([]byte, 1024)
       w.WriteStatusLine(200)
       w.WriteHeaders(h)
       for {
+        buf := make([]byte, 1024)
         n, err := r.Body.Read(buf)
-        if err != nil {
-          log.Fatal("super bad err when reading body", err)
+        if err != nil && err != io.EOF {
+          log.Fatal("super bad err when reading body: ", err)
         }
+        originalErr := err
+        fmt.Printf("Read %d bytes from httpbin.org\n", n)
+        fmt.Printf("Data: %s\n", string(buf[:n]))
+        fullData = append(fullData, buf[:n]...)
         if n == 0 {
-          n, err = w.WriteChunkedBodyDone()
+          sha256Sum := sha256.Sum256(fullData)
+          trailers := headers.NewHeaders()
+          trailers.Set("X-Content-SHA256", fmt.Sprintf("%x", sha256Sum))
+          trailers.Set("X-Content-Length", fmt.Sprintf("%d", len(fullData)))
+          n, err = w.WriteChunkedBodyDone(trailers)
           if err != nil {
-            log.Fatal("super bad err when chunking", err)
+            log.Fatal("super bad err when chunking: ", err)
           }
           return 
         }
-        n, err = w.WriteChunkedBody(buf)
+        n, err = w.WriteChunkedBody(buf[:n])
         if err != nil {
-          log.Fatal("super bad err when reading body", err)
+          log.Fatal("super bad err when reading body: ", err)
+        }
+        if originalErr == io.EOF {
+          sha256Sum := sha256.Sum256(fullData)
+          trailers := headers.NewHeaders()
+          trailers.Set("X-Content-SHA256", fmt.Sprintf("%x", sha256Sum))
+          trailers.Set("X-Content-Length", fmt.Sprintf("%d", len(fullData)))
+          n, err = w.WriteChunkedBodyDone(trailers)
+          if err != nil {
+            log.Fatal("super bad err when chunking: ", err)
+          }
+          return 
         }
       }
     }

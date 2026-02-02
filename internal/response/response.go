@@ -67,18 +67,25 @@ func (w *Writer) WriteBody(p []byte) (int, error) {
 func (w *Writer) WriteChunkedBody(p []byte) (int, error) {
   totalWritten := 0
   for len(p) > 0 {
-    var bytesInChunk byte = min(0xff, byte(len(p)))
+    var numBytesInChunk int = min(255, len(p))
+    var bytesInChunk byte = byte(numBytesInChunk)
+    fmt.Printf("bytes in chunk: %s\n", string(bytesInChunk))
+    fmt.Printf("length of p: %d\n", len(p))
+    fmt.Printf("result: %d\n", min(255, byte(len(p))))
     n, err := w.Writer.Write([]byte{bytesInChunk, headers.CRLF[0], headers.CRLF[1]})
     if err != nil {
       return 0, err
     }
     n, err = w.Writer.Write(p[:bytesInChunk])
+    fmt.Printf("Writing chunk of %d bytes\n", n)
+    fmt.Printf("Wrote data: %s\n", string(p[:n]))
     if err != nil {
       return 0, err
     }
     p = p[n:]
 
     n, err = w.Writer.Write([]byte(headers.CRLF))
+    fmt.Printf("wrote CRLF\n")
     if err != nil {
       return 0, err
     }
@@ -88,8 +95,8 @@ func (w *Writer) WriteChunkedBody(p []byte) (int, error) {
   return totalWritten, nil
 }
 
-func (w *Writer) WriteChunkedBodyDone() (int, error) {
-  _, err := w.Writer.Write([]byte{0x00, headers.CRLF[0], headers.CRLF[1]})
+func (w *Writer) WriteChunkedBodyDone(trailers headers.Headers) (int, error) {
+  _, err := w.Writer.Write([]byte{0x00})
   if err != nil {
     return 0, err
   }
@@ -97,6 +104,12 @@ func (w *Writer) WriteChunkedBodyDone() (int, error) {
   if err != nil {
     return 0, err
   }
+  w.WriteTrailers(trailers)
+  _, err = w.Writer.Write([]byte(headers.CRLF))
+  if err != nil {
+    return 0, err
+  }
+  fmt.Printf("wrote final chunk\n")
   return 0, nil
 }
 
@@ -137,4 +150,8 @@ func WriteHeaders(w io.Writer, headers headers.Headers) error {
   // fmt.Printf("%s", h)
   _, err := w.Write([]byte(h))
   return err
+}
+
+func (w *Writer) WriteTrailers(h headers.Headers) error {
+  return w.WriteHeaders(h)
 }
